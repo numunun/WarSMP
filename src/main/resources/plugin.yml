@@ -1,0 +1,15 @@
+name: WarSMP
+version: 1.6_11Forked
+main: org.TogethersChannel.warSMP.WarSMP
+api-version: '1.21'
+depend: [BetterTeaming]
+# ↑↑↑ [중요] 이 줄이 없거나, BetterTeaming 철자가 틀리면 위와 같은 오류가 납니다.
+
+commands:
+  warsmp:
+    description: WarSMP 메인 명령어
+    permission: warsmp.admin
+    aliases: [ws]
+  tptochief:
+    description: 팀 재건 시 팀장에게 텔레포트합니다.
+    permission: warsmp.tptochief

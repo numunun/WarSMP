@@ -1,0 +1,10 @@
+# Gradle 결과물 제외
+build/
+.gradle/
+
+# IDE 설정 파일 제외
+.idea/
+*.iml
+
+# 기타 로그 및 임시 파일
+out/
