@@ -1,5 +1,5 @@
 name: WarSMP
-version: 1.6_11Forked
+version: 1.7_11Forked
 main: org.TogethersChannel.warSMP.WarSMP
 api-version: '1.21'
 depend: [BetterTeaming]

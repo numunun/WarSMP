@@ -13,37 +13,36 @@ class WarSMP : JavaPlugin() {
     lateinit var api: BetterTeamingAPI; private set
 
     var isWarStarted = false
-    val slaves = mutableMapOf<UUID, String>()
     var isGameRunning = false
     var isPeaceTime = false
     var peaceTimeSeconds = 180
     var pvpKeepInventory = false
     var scatterRadius = -1
 
-    // [신규] 전투 로그 (맞은사람UUID -> <때린사람UUID, 맞은시간>)
     val lastAttacker = mutableMapOf<UUID, Pair<UUID, Long>>()
 
     lateinit var gameManager: GameManager
-    lateinit var beaconListener: BeaconListener
-    lateinit var proximityDetector: ProximityDetector
-    lateinit var slaveEffectTask: SlaveEffectTask
+    // [수정] 외부에서 접근 가능하도록 nullable로 변경
+    var beaconListener: BeaconListener? = null
+    var proximityDetector: ProximityDetector? = null
 
     interface WarAPI { fun isWarStarted(): Boolean }
 
     override fun onEnable() {
         if (!setupAPI()) { server.pluginManager.disablePlugin(this); return }
 
-        slaveEffectTask = SlaveEffectTask(this).apply { runTaskTimer(this@WarSMP, 0L, 100L) }
+        // 순서대로 초기화
+        val bListener = BeaconListener(this)
+        beaconListener = bListener
+
         gameManager = GameManager(this)
-        beaconListener = BeaconListener(this)
         proximityDetector = ProximityDetector(this)
 
         server.pluginManager.registerEvents(PlayerDeathListener(this), this)
         server.pluginManager.registerEvents(ItemBanListener(this), this)
         server.pluginManager.registerEvents(GameRuleListener(this), this)
-        server.pluginManager.registerEvents(beaconListener, this)
+        server.pluginManager.registerEvents(bListener, this)
         server.pluginManager.registerEvents(WorldBanListener(this), this)
-        server.pluginManager.registerEvents(SlaveListener(this), this)
 
         getCommand("warsmp")?.setExecutor(WarSMPCommand(this))
         getCommand("tptochief")?.setExecutor(TpToChiefCommand(this))
@@ -56,8 +55,8 @@ class WarSMP : JavaPlugin() {
     }
 
     override fun onDisable() {
+        // gameManager가 초기화되었을 때만 중지 호출
         if (::gameManager.isInitialized) gameManager.stopGame(false)
-        if (::slaveEffectTask.isInitialized) slaveEffectTask.cancel()
         logger.info("WarSMP 비활성화됨")
     }
 

@@ -7,7 +7,6 @@ import net.kyori.adventure.title.Title
 import org.bukkit.*
 import org.bukkit.inventory.ItemStack
 import org.bukkit.scheduler.BukkitRunnable
-import java.time.Duration
 import kotlin.math.*
 
 class GameManager(private val plugin: WarSMP) {
@@ -17,28 +16,34 @@ class GameManager(private val plugin: WarSMP) {
     fun startGame() {
         if (plugin.isGameRunning) return
         plugin.isGameRunning = true
-        plugin.server.broadcast(Component.text("게임 시작", NamedTextColor.GOLD))
+        plugin.server.broadcast(Component.text("전쟁 게임이 시작되었습니다!", NamedTextColor.GOLD))
         plugin.server.worlds.forEach { it.setGameRule(GameRule.ANNOUNCE_ADVANCEMENTS, false) }
+
         scatterPlayers()
         startPeaceTime()
         giveInitialBeacons()
-        plugin.proximityDetector.start()
+
+        // [수정] Safe Call(?.)을 사용하여 접근 제한 에러 해결
+        plugin.proximityDetector?.start()
     }
 
     fun stopGame(forced: Boolean) {
         if (!plugin.isGameRunning) return
         plugin.isGameRunning = false
+
         peaceTask?.cancel()
         plugin.isPeaceTime = false
         plugin.isWarStarted = false
-        plugin.slaves.clear()
-        plugin.proximityDetector.stop()
 
-        // BeaconListener에 구현한 함수 호출
-        plugin.beaconListener.cancelAllRebuildTimers()
+        // [수정] 노예 관련 리스트 제거(slaves.clear)는 이제 필요 없음 (이미 변수 삭제됨)
 
-        plugin.slaveEffectTask.clearSlaves()
-        plugin.server.broadcast(Component.text(if (forced) "강제 종료" else "게임 종료", NamedTextColor.RED))
+        // [수정] Safe Call(?.) 사용
+        plugin.proximityDetector?.stop()
+
+        // [수정] BeaconListener 타이머 취소 (Safe Call)
+        plugin.beaconListener?.cancelAllRebuildTimers()
+
+        plugin.server.broadcast(Component.text(if (forced) "게임이 강제 종료되었습니다." else "게임이 종료되었습니다.", NamedTextColor.RED))
         plugin.server.worlds.forEach { it.setGameRule(GameRule.ANNOUNCE_ADVANCEMENTS, true) }
     }
 
@@ -73,7 +78,12 @@ class GameManager(private val plugin: WarSMP) {
     }
 
     private fun giveInitialBeacons() {
-        plugin.server.onlinePlayers.forEach { if (api.isTeamLeader(it)) it.inventory.addItem(ItemStack(Material.BEACON)) }
+        plugin.server.onlinePlayers.forEach {
+            if (api.isTeamLeader(it)) {
+                it.inventory.addItem(ItemStack(Material.BEACON))
+                it.sendMessage(Component.text("팀 신호기가 지급되었습니다. 안전한 위치에 설치하세요!", NamedTextColor.GREEN))
+            }
+        }
     }
 
     private fun startPeaceTime() {
@@ -83,36 +93,49 @@ class GameManager(private val plugin: WarSMP) {
             override fun run() {
                 if (time <= 0) {
                     plugin.isPeaceTime = false
-                    plugin.server.broadcast(Component.text("PVP 활성화", NamedTextColor.RED))
+                    plugin.isWarStarted = true
+                    plugin.server.broadcast(Component.text("평화 시간이 종료되었습니다! 이제 PVP와 신호기 파괴가 가능합니다.", NamedTextColor.RED))
                     cancel()
                     return
                 }
-                if (time % 60 == 0 || time <= 10) {
-                    plugin.server.showTitle(Title.title(Component.text("평화 시간"), Component.text("$time 초")))
+                if (time % 60 == 0 || (time <= 10 && time > 0)) {
+                    plugin.server.showTitle(Title.title(
+                        Component.text("평화 시간 종료까지", NamedTextColor.YELLOW),
+                        Component.text("$time 초", NamedTextColor.RED)
+                    ))
                 }
                 time--
             }
         }.apply { runTaskTimer(plugin, 0, 20) }
     }
 
+    /**
+     * 승리 조건 체크
+     * 노예 로직을 완전히 제거하고, 오직 신호기 보유 여부와 재건 여부로만 판정합니다.
+     */
     fun checkWinCondition() {
-        if (!plugin.isWarStarted) return
-        val activeTeams = api.getAllTeamNames().filter {
-            // BeaconListener에 구현한 함수 호출
-            api.getTeamBeaconLocation(it) != null || plugin.beaconListener.isTeamRebuilding(it)
+        if (!plugin.isGameRunning || plugin.isPeaceTime) return
+
+        val activeTeams = api.getAllTeamNames().filter { teamName ->
+            val hasBeacon = api.getTeamBeaconLocation(teamName) != null
+            val isRebuilding = plugin.beaconListener?.isTeamRebuilding(teamName) == true
+
+            hasBeacon || isRebuilding
         }
 
         if (activeTeams.size == 1) {
             val winner = activeTeams[0]
-            val othersAlive = plugin.server.onlinePlayers.any {
-                api.getPlayerTeamName(it) != winner && !plugin.slaves.containsKey(it.uniqueId)
-            }
-            if (!othersAlive) {
-                plugin.server.broadcast(Component.text("승리: $winner", NamedTextColor.GOLD))
-                stopGame(false)
-            }
-        } else if (activeTeams.isEmpty()) {
-            plugin.server.broadcast(Component.text("무승부", NamedTextColor.GRAY))
+
+            // [수정] 스크린샷에 있던 slaves 관련 체크 코드를 삭제함
+            plugin.server.broadcast(
+                Component.text("\n🏆 [ ", NamedTextColor.GOLD)
+                    .append(Component.text(winner, NamedTextColor.AQUA))
+                    .append(Component.text(" ] 팀이 최후의 승자가 되었습니다! 🏆\n", NamedTextColor.GOLD))
+            )
+            stopGame(false)
+        }
+        else if (activeTeams.isEmpty()) {
+            plugin.server.broadcast(Component.text("모든 팀의 신호기가 파괴되어 승자 없이 게임이 종료되었습니다.", NamedTextColor.GRAY))
             stopGame(false)
         }
     }

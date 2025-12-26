@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "org.TogethersChannel"
-version = "1.6_11Forked"
+version = "1.7_11Forked"
 
 repositories {
     mavenCentral()

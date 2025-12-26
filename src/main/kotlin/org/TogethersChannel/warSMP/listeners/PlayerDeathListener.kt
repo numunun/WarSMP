@@ -17,7 +17,7 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     fun onPlayerDeath(event: PlayerDeathEvent) {
-        // 사망 메시지 색상 제거
+        // 1. 사망 메시지 커스텀
         val originalMsg = event.deathMessage()
         if (originalMsg is TranslatableComponent) {
             val newArgs = originalMsg.args().map { arg ->
@@ -30,6 +30,7 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
             event.deathMessage(originalMsg.args(newArgs))
         }
 
+        // 2. 게임 미실행 중 처리
         if (!plugin.isGameRunning) {
             event.keepInventory = true
             event.drops.clear()
@@ -38,14 +39,7 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
 
         val player = event.player
 
-        if (plugin.slaves.containsKey(player.uniqueId)) {
-            event.keepInventory = true
-            event.keepLevel = true
-            event.drops.clear()
-            player.sendMessage(Component.text("노예는 죽어도 아이템을 잃지 않습니다.", NamedTextColor.GRAY))
-            return
-        }
-
+        // 3. 전쟁 시작 전 처리
         if (!plugin.isWarStarted) {
             event.keepInventory = true
             event.keepLevel = true
@@ -54,17 +48,16 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
             return
         }
 
-        // [수정] 킬러 판정 로직 강화 (전투 로그 활용)
+        // 4. 킬러 판정 로직
         var killer = player.killer
         if (killer == null) {
-            // 최근 10초(10000ms) 내에 때린 사람이 있는지 확인
             val lastLog = plugin.lastAttacker[player.uniqueId]
             if (lastLog != null && System.currentTimeMillis() - lastLog.second < 10000) {
                 killer = plugin.server.getPlayer(lastLog.first)
             }
         }
 
-        // 1. PVE (진짜 자연사)
+        // 5. PVE 사망 처리
         if (killer == null) {
             event.keepInventory = true
             event.keepLevel = true
@@ -73,12 +66,11 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
             return
         }
 
-        // 2. PVP (팀원 또는 다른 팀)
+        // 6. PVP 사망 처리
         if (killer is Player) {
             val victimTeam = api.getPlayerTeamName(player)
             val killerTeam = api.getPlayerTeamName(killer)
 
-            // 2a. 아군 팀킬
             if (victimTeam != null && victimTeam == killerTeam) {
                 event.keepInventory = true
                 event.keepLevel = true
@@ -87,8 +79,7 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
                 return
             }
 
-            // 2b. 적군에게 사망 (또는 전투 중 자연사)
-            player.sendMessage(Component.text("PVP 사망!", NamedTextColor.RED))
+            player.sendMessage(Component.text("적군에게 사망했습니다!", NamedTextColor.RED))
 
             if (plugin.pvpKeepInventory) {
                 event.keepInventory = true
@@ -101,36 +92,30 @@ class PlayerDeathListener(private val plugin: WarSMP) : Listener {
                 player.sendMessage(Component.text("아이템과 레벨을 모두 [잃습니다].", NamedTextColor.RED))
             }
 
-            // 노예 시스템 적용 및 멸망 확인
-            if (victimTeam != null && killerTeam != null) {
-                if (api.getTeamBeaconLocation(victimTeam) == null) {
-                    plugin.slaves[player.uniqueId] = killerTeam
+            // 7. 팀 생존/멸망 확인 로직 [핵심 수정]
+            if (victimTeam != null) {
+                val hasBeacon = api.getTeamBeaconLocation(victimTeam) != null
 
+                // [수정 포인트] plugin.beaconListener 뒤에 ?. 을 붙이고 == true 체크를 추가함
+                val isRebuilding = plugin.beaconListener?.isTeamRebuilding(victimTeam) == true
+
+                val remainingMembers = api.getLivingTeamMembers(victimTeam).filter {
+                    it.uniqueId != player.uniqueId
+                }
+
+                if (!hasBeacon && !isRebuilding && remainingMembers.isEmpty()) {
                     plugin.server.broadcast(
-                        Component.text(player.name, NamedTextColor.YELLOW)
-                            .append(Component.text(" 님이 ", NamedTextColor.WHITE))
-                            .append(Component.text("[$killerTeam]", NamedTextColor.RED))
-                            .append(Component.text(" 팀의 노예가 되었습니다!", NamedTextColor.WHITE))
+                        Component.text("=========================================", NamedTextColor.DARK_RED, TextDecoration.BOLD)
                     )
-
-                    plugin.slaveEffectTask.applySlaveEffects(player)
-
-                    val remainingMembers = api.getLivingTeamMembers(victimTeam).filter {
-                        !plugin.slaves.containsKey(it.uniqueId) && it.uniqueId != player.uniqueId
-                    }
-
-                    if (remainingMembers.isEmpty()) {
-                        plugin.server.broadcast(
-                            Component.text("=========================================", NamedTextColor.DARK_RED, TextDecoration.BOLD)
-                        )
-                        plugin.server.broadcast(
-                            Component.text("       [$victimTeam] 팀이 멸망했습니다!", NamedTextColor.RED, TextDecoration.BOLD)
-                        )
-                        plugin.server.broadcast(
-                            Component.text("=========================================", NamedTextColor.DARK_RED, TextDecoration.BOLD)
-                        )
-                        plugin.gameManager.checkWinCondition()
-                    }
+                    plugin.server.broadcast(
+                        Component.text("       [$victimTeam] 팀이 최종적으로 멸망했습니다!", NamedTextColor.RED, TextDecoration.BOLD)
+                    )
+                    plugin.server.broadcast(
+                        Component.text("=========================================", NamedTextColor.DARK_RED, TextDecoration.BOLD)
+                    )
+                    plugin.gameManager.checkWinCondition()
+                } else if (!hasBeacon && isRebuilding) {
+                    player.sendMessage(Component.text("현재 팀 신호기가 없지만, 재건 시간이 남아있어 탈락하지 않았습니다.", NamedTextColor.YELLOW))
                 }
             }
         }
